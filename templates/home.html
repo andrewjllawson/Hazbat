@@ -12,6 +12,11 @@
         every relationship enforced at the database level.
     </p>
 </div>
+{% if request.session.get('is_admin') %}
+<div style="text-align: center; margin-bottom: 20px;">
+    <a href="/admin/users/new" style="font-size: 13px; color: #2e5fa3;">+ Create a new user</a>
+</div>
+{% endif %}
 
 <div style="display: flex; gap: 24px; margin-top: 32px;">
 

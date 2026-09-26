@@ -1639,3 +1639,67 @@ def HAZbot_ask(request: Request, question: str = Form(...)):
     conn.close()
 
     return JSONResponse({"sql": sql_part, "insight": insight_part, "columns": columns, "results": results})
+
+@app.get("/admin/users/new", response_class=HTMLResponse)
+def new_user_form(request: Request):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+    if not request.session.get("is_admin"):
+        return HTMLResponse("Admins only.", status_code=403)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT project_name FROM tbl_projects WHERE active = true ORDER BY project_name")
+    projects = [row[0] for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+
+    return templates.TemplateResponse("new_user.html", {"request": request, "projects": projects})
+
+
+@app.post("/admin/users/new", response_class=HTMLResponse)
+def submit_new_user(request: Request, username: str = Form(...), password: str = Form(...),
+                     full_name: str = Form(...), is_admin: str = Form(None),
+                     projects: list = Form(default=[])):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+    if not request.session.get("is_admin"):
+        return HTMLResponse("Admins only.", status_code=403)
+
+    username = username.strip()
+    full_name = full_name.strip()
+    error = None
+    success = None
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT project_name FROM tbl_projects WHERE active = true ORDER BY project_name")
+    all_projects = [row[0] for row in cur.fetchall()]
+
+    if not username or not password or not full_name:
+        error = "Username, password, and full name are all required."
+    else:
+        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        try:
+            cur.execute(
+                "INSERT INTO tbl_users (username, password_hash, full_name, is_admin) VALUES (%s, %s, %s, %s) RETURNING user_id",
+                (username, password_hash, full_name, is_admin == "on")
+            )
+            new_user_id = cur.fetchone()[0]
+
+            for project in projects:
+                cur.execute(
+                    "INSERT INTO tbl_user_projects (user_id, project_name) VALUES (%s, %s)",
+                    (new_user_id, project)
+                )
+            conn.commit()
+            success = f"User '{username}' created with access to: {', '.join(projects) if projects else 'no projects'}."
+        except Exception as e:
+            conn.rollback()
+            error = str(e)
+
+    cur.close()
+    conn.close()
+    return templates.TemplateResponse("new_user.html", {"request": request, "projects": all_projects, "error": error, "success": success})
