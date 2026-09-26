@@ -252,4 +252,110 @@
             });
         });
 </script>
+<div style="margin-top: 40px;">
+    <div class="result">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+            <h3 style="margin: 0;">Cycling Data</h3>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="text" id="cyclingRecordId" placeholder="Record ID e.g. CAT-NMC-001-C001-CC-01" style="padding: 8px 10px; border-radius: 8px; border: 1px solid #dde2ee; font-size: 13px; width: 240px;">
+                <select id="cyclingChartType" style="padding: 8px 10px; border-radius: 8px; border: 1px solid #dde2ee; font-size: 13px;">
+                    <option value="voltage-capacity">Voltage vs Capacity</option>
+                    <option value="capacity-fade">Capacity vs Cycle</option>
+                    <option value="efficiency">Coulombic Efficiency vs Cycle</option>
+                </select>
+                <select id="cyclePicker" style="padding: 8px 10px; border-radius: 8px; border: 1px solid #dde2ee; font-size: 13px; display: none;">
+                </select>
+                <button id="loadCyclingBtn" style="margin: 0; padding: 8px 16px;">Load</button>
+            </div>
+        </div>
+        <p id="cyclingStatus" style="font-size: 13px; color: #999; margin: 0 0 10px;"></p>
+        <canvas id="cyclingGraphChart"></canvas>
+    </div>
+</div>
+
+<script>
+    let cyclingChart = null;
+    let currentSummary = null;
+
+    document.getElementById('cyclingChartType').addEventListener('change', (e) => {
+        document.getElementById('cyclePicker').style.display = e.target.value === 'voltage-capacity' ? 'inline-block' : 'none';
+    });
+
+    async function loadCyclingSummary(recordId) {
+        const res = await fetch(`/api/cycling/${recordId}/summary`);
+        if (!res.ok) throw new Error('No cycling data found for this record');
+        return await res.json();
+    }
+
+    async function loadSingleCycle(recordId, cycleNum) {
+        const res = await fetch(`/api/cycling/${recordId}/cycle/${cycleNum}`);
+        if (!res.ok) throw new Error('Could not load that cycle');
+        return await res.json();
+    }
+
+    function renderChart(type, labels, values, label, xTitle, yTitle) {
+        if (cyclingChart) cyclingChart.destroy();
+        cyclingChart = new Chart(document.getElementById('cyclingGraphChart'), {
+            type: type,
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: label,
+                    data: values,
+                    borderColor: '#2e5fa3',
+                    backgroundColor: type === 'line' ? 'rgba(46,95,163,0.08)' : '#2e5fa3',
+                    fill: type === 'line',
+                    tension: 0.1,
+                    pointRadius: type === 'line' && values.length > 200 ? 0 : 3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: true } },
+                scales: {
+                    x: { title: { display: true, text: xTitle } },
+                    y: { title: { display: true, text: yTitle } }
+                }
+            }
+        });
+    }
+
+    document.getElementById('loadCyclingBtn').addEventListener('click', async () => {
+        const recordId = document.getElementById('cyclingRecordId').value.trim().toUpperCase();
+        const chartType = document.getElementById('cyclingChartType').value;
+        const status = document.getElementById('cyclingStatus');
+        if (!recordId) { status.textContent = 'Enter a record ID first.'; return; }
+
+        status.textContent = 'Loading...';
+        try {
+            currentSummary = await loadCyclingSummary(recordId);
+
+            if (chartType === 'capacity-fade') {
+                renderChart('bar', currentSummary.cycles, currentSummary.capacity_per_cycle, 'Capacity (mAh)', 'Half-cycle', 'Capacity (mAh)');
+                status.textContent = `${currentSummary.cycles.length} half-cycles loaded for ${recordId}.`;
+
+            } else if (chartType === 'efficiency') {
+                renderChart('line', currentSummary.efficiency_cycle_numbers, currentSummary.efficiency, 'Coulombic Efficiency (%)', 'Cycle', 'Efficiency (%)');
+                status.textContent = `${currentSummary.efficiency.length} cycle pairs analysed for ${recordId}.`;
+
+            } else if (chartType === 'voltage-capacity') {
+                const picker = document.getElementById('cyclePicker');
+                picker.innerHTML = currentSummary.cycles.map(c => `<option value="${c}">Half-cycle ${c}</option>`).join('');
+                picker.style.display = 'inline-block';
+                const firstCycle = currentSummary.cycles[0];
+                const cycleData = await loadSingleCycle(recordId, firstCycle);
+                renderChart('line', cycleData.capacity_mah.map((_, i) => i), cycleData.voltage_v, `Half-cycle ${firstCycle}`, 'Sample index', 'Voltage (V)');
+                status.textContent = `Showing half-cycle ${firstCycle} of ${currentSummary.cycles.length} for ${recordId}.`;
+
+                picker.onchange = async () => {
+                    const cycleData = await loadSingleCycle(recordId, picker.value);
+                    renderChart('line', cycleData.capacity_mah.map((_, i) => i), cycleData.voltage_v, `Half-cycle ${picker.value}`, 'Sample index', 'Voltage (V)');
+                    status.textContent = `Showing half-cycle ${picker.value} of ${currentSummary.cycles.length} for ${recordId}.`;
+                };
+            }
+        } catch (err) {
+            status.textContent = err.message;
+        }
+    });
+</script>
 {% endblock %}

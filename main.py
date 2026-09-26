@@ -1164,8 +1164,8 @@ async def cycling_upload_submit(request: Request, record_id: str = Form(...), fi
     return templates.TemplateResponse("cycling_upload.html", {"request": request, "error": error, "success": success})
 
 
-@app.get("/api/cycling/{record_id}")
-def cycling_data(record_id: str):
+@app.get("/api/cycling/{record_id}/summary")
+def cycling_summary(record_id: str):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -1183,14 +1183,39 @@ def cycling_data(record_id: str):
     mpr = BioLogic.MPRfile(row[0])
     data = mpr.data
 
-    # Downsample for the browser — 52,000 points is too many to chart smoothly
-    step = max(1, len(data) // 1000)
-    sampled = data[::step]
+    cycles = sorted(set(int(x) for x in data["half cycle"]))
+    capacity_per_cycle = []
+    is_charge = []
+
+    for c in cycles:
+        mask = data["half cycle"] == c
+        q_values = data["Q charge/discharge/mA.h"][mask]
+        if len(q_values) < 2:
+            capacity_per_cycle.append(0.0)
+            is_charge.append(None)
+            continue
+        delta = float(q_values[-1]) - float(q_values[0])
+        capacity_per_cycle.append(abs(delta))
+        is_charge.append(delta > 0)
+
+    # Real cycles only — drop negligible rest/OCV segments (capacity below 0.01 mAh)
+    real_cycles = [(c, cap, chg) for c, cap, chg in zip(cycles, capacity_per_cycle, is_charge) if cap > 0.01]
+
+    # Pair each charge with the discharge that follows it
+    efficiency = []
+    eff_cycle_numbers = []
+    for i in range(len(real_cycles) - 1):
+        c1, cap1, chg1 = real_cycles[i]
+        c2, cap2, chg2 = real_cycles[i + 1]
+        if chg1 is True and chg2 is False and cap1 > 0:
+            efficiency.append(round((cap2 / cap1) * 100, 2))
+            eff_cycle_numbers.append(c2)
 
     return JSONResponse({
-        "capacity_mah": [float(x) for x in sampled["Q charge/discharge/mA.h"]],
-        "voltage_v": [float(x) for x in sampled["Ewe/V"]],
-        "half_cycle": [int(x) for x in sampled["half cycle"]]
+        "cycles": cycles,
+        "capacity_per_cycle": capacity_per_cycle,
+        "efficiency": efficiency,
+        "efficiency_cycle_numbers": eff_cycle_numbers
     })
 
 
