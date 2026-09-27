@@ -782,7 +782,8 @@ def inventory_materials(request: Request):
     return templates.TemplateResponse(
         "inventory.html",
         {"request": request, "title": "Materials", "columns": columns, "rows": rows,
-         "new_url": "/materials/new", "bulk_url": "/materials/bulk-upload"}
+         "new_url": "/materials/new", "bulk_url": "/materials/bulk-upload",
+         "edit_url_base": "/materials"}
     )
  
 @app.get("/inventory/coatings", response_class=HTMLResponse)
@@ -802,7 +803,8 @@ def inventory_coatings(request: Request):
     return templates.TemplateResponse(
         "inventory.html",
         {"request": request, "title": "Coatings", "columns": columns, "rows": rows,
-         "new_url": "/coatings/new", "bulk_url": "/coatings/bulk-upload"}
+         "new_url": "/coatings/new", "bulk_url": "/coatings/bulk-upload",
+         "edit_url_base": "/coatings"}
     )
  
  
@@ -823,7 +825,7 @@ def inventory_slp(request: Request):
     return templates.TemplateResponse(
         "inventory.html",
         {"request": request, "title": "SLP Cells", "columns": columns, "rows": rows,
-         "new_url": "/slp/new", "bulk_url": "/slp/bulk-upload"}
+         "new_url": "/slp/new","edit_url_base": "/slp" ,"bulk_url": "/slp/bulk-upload"}
     )
  
 @app.get("/inventory/coincell", response_class=HTMLResponse)
@@ -1407,93 +1409,6 @@ def card_data(record_id: str):
 
     return JSONResponse({"record_id": record_id, "record_type": record_type, "record": record, "chain": chain})
 
-    # Generate the QR code for THIS card's own URL
-    card_url = f"{BASE_URL}/card/{record_id}"
-    qr_img = qrcode.make(card_url)
-    buf = io.BytesIO()
-    qr_img.save(buf, format="PNG")
-    qr_base64 = base64.b64encode(buf.getvalue()).decode()
-
-    # Reuse the same lookup logic as /directory
-    conn = get_connection()
-    cur = conn.cursor()
-
-    record = None
-    chain = []
-
-    if record_type == "coating":
-        cur.execute(
-            "SELECT material_id, project, coating_date, made_by, coat_weight_gsm, porosity, notes "
-            "FROM tbl_coating WHERE coating_id = %s", (record_id,)
-        )
-        row = cur.fetchone()
-        if row:
-            columns = ["Material ID", "Project", "Coating Date", "Made By", "GSM", "Porosity", "Notes"]
-            record = dict(zip(columns, row))
-            cur.execute("SELECT slp_id FROM tbl_slp WHERE coating_id = %s", (record_id,))
-            chain += [f"SLP: {r[0]}" for r in cur.fetchall()]
-            cur.execute("SELECT coincell_id FROM tbl_coincell WHERE coating_id = %s", (record_id,))
-            chain += [f"CoinCell: {r[0]}" for r in cur.fetchall()]
-            cur.execute("SELECT mlp_id FROM tbl_mlp WHERE cat_coating_id = %s OR an_coating_id = %s", (record_id, record_id))
-            chain += [f"MLP: {r[0]}" for r in cur.fetchall()]
-
-    elif record_type == "material":
-        cur.execute(
-            "SELECT chemistry, supplier, date_received, quantity_kg, location, availability, notes "
-            "FROM tbl_materials WHERE material_id = %s", (record_id,)
-        )
-    elif record_type == "slp":
-        cur.execute(
-            "SELECT coating_id, project, date_made, made_by, electrolyte, formation_capacity, np_ratio, notes "
-            "FROM tbl_slp WHERE slp_id = %s", (record_id,)
-        )
-        row = cur.fetchone()
-        if row:
-            columns = ["Coating ID", "Project", "Date Made", "Made By", "Electrolyte", "Formation Capacity", "N/P Ratio", "Notes"]
-            record = dict(zip(columns, row))
-            chain.append(f"Coating: {record['Coating ID']}")
-
-    elif record_type == "coincell":
-        cur.execute(
-            "SELECT coating_id, project, date_made, made_by, electrolyte, formation_capacity, cell_type, gsm, notes "
-            "FROM tbl_coincell WHERE coincell_id = %s", (record_id,)
-        )
-        row = cur.fetchone()
-        if row:
-            columns = ["Coating ID", "Project", "Date Made", "Made By", "Electrolyte", "Formation Capacity", "Cell Type", "GSM", "Notes"]
-            record = dict(zip(columns, row))
-            chain.append(f"Coating: {record['Coating ID']}")
-
-    elif record_type == "mlp":
-        cur.execute(
-            "SELECT cat_coating_id, an_coating_id, project, date_made, cell_capacity, electrolyte, ac_area_ratio "
-            "FROM tbl_mlp WHERE mlp_id = %s", (record_id,)
-        )
-        row = cur.fetchone()
-        if row:
-            columns = ["Cathode Coating", "Anode Coating", "Project", "Date Made", "Cell Capacity", "Electrolyte", "A/C Area Ratio"]
-            record = dict(zip(columns, row))
-            chain.append(f"Cathode: {record['Cathode Coating']}")
-            chain.append(f"Anode: {record['Anode Coating']}")
-        
-        row = cur.fetchone()
-        if row:
-            columns = ["Chemistry", "Supplier", "Date Received", "Quantity (kg)", "Location", "Availability", "Notes"]
-            record = dict(zip(columns, row))
-            cur.execute("SELECT coating_id FROM tbl_coating WHERE material_id = %s", (record_id,))
-            chain += [f"Coating: {r[0]}" for r in cur.fetchall()]
-
-    cur.close()
-    conn.close()
-
-    if not record:
-        return HTMLResponse("Record not found.", status_code=404)
-
-    return templates.TemplateResponse(
-        "card.html",
-        {"request": request, "record_id": record_id, "record_type": record_type,
-         "record": record, "chain": chain, "qr_base64": qr_base64}
-    )
 
 @app.get("/api/chart/gsm-by-coating")
 def chart_gsm():
@@ -1703,3 +1618,239 @@ def submit_new_user(request: Request, username: str = Form(...), password: str =
     cur.close()
     conn.close()
     return templates.TemplateResponse("new_user.html", {"request": request, "projects": all_projects, "error": error, "success": success})
+
+@app.get("/materials/{material_id}/edit", response_class=HTMLResponse)
+def edit_material_form(request: Request, material_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT material_id, chemistry, supplier, date_received, quantity_kg, location, availability "
+        "FROM tbl_materials WHERE material_id = %s", (material_id,)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        return HTMLResponse("Material not found.", status_code=404)
+
+    columns = ["material_id", "chemistry", "supplier", "date_received", "quantity_kg", "location", "availability"]
+    material = dict(zip(columns, row))
+    return templates.TemplateResponse("edit_material.html", {"request": request, "material": material})
+
+
+@app.post("/materials/{material_id}/edit", response_class=HTMLResponse)
+def submit_edit_material(request: Request, material_id: str, chemistry: str = Form(...), supplier: str = Form(...)):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    chemistry = chemistry.strip()
+    supplier = supplier.strip()
+    error = None
+    success = None
+
+    if not chemistry or not supplier:
+        error = "All fields are required."
+    else:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE tbl_materials SET chemistry = %s, supplier = %s WHERE material_id = %s",
+                (chemistry, supplier, material_id)
+            )
+            conn.commit()
+            success = "Material updated."
+        except Exception as e:
+            conn.rollback()
+            error = str(e)
+        cur.close()
+        conn.close()
+
+    material = {"material_id": material_id, "chemistry": chemistry, "supplier": supplier}
+    return templates.TemplateResponse("edit_material.html", {"request": request, "material": material, "error": error, "success": success})
+
+@app.post("/materials/{material_id}/delete")
+def delete_material(request: Request, material_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+    if not request.session.get("is_admin"):
+        return HTMLResponse("Admins only.", status_code=403)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM tbl_materials WHERE material_id = %s", (material_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return HTMLResponse(f"Cannot delete: this material still has linked coatings referencing it. ({str(e)})", status_code=400)
+
+    cur.close()
+    conn.close()
+    return RedirectResponse(url="/inventory/materials", status_code=303)
+@app.get("/coatings/{coating_id}/edit", response_class=HTMLResponse)
+def edit_coating_form(request: Request, coating_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT coating_id, material_id, project, coating_date, made_by, coat_weight_gsm, porosity "
+        "FROM tbl_coating WHERE coating_id = %s", (coating_id,)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        return HTMLResponse("Coating not found.", status_code=404)
+
+    columns = ["coating_id", "material_id", "project", "coating_date", "made_by", "coat_weight_gsm", "porosity"]
+    coating = dict(zip(columns, row))
+    return templates.TemplateResponse("edit_coating.html", {"request": request, "coating": coating})
+
+
+@app.post("/coatings/{coating_id}/edit", response_class=HTMLResponse)
+def submit_edit_coating(request: Request, coating_id: str, made_by: str = Form(...), coat_weight_gsm: str = Form(None), porosity: str = Form(None)):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    made_by = made_by.strip()
+    error = None
+    success = None
+
+    if not made_by:
+        error = "Made By is required."
+    else:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE tbl_coating SET made_by = %s, coat_weight_gsm = %s, porosity = %s WHERE coating_id = %s",
+                (made_by, coat_weight_gsm if coat_weight_gsm else None, porosity if porosity else None, coating_id)
+            )
+            conn.commit()
+            success = "Coating updated."
+        except Exception as e:
+            conn.rollback()
+            error = str(e)
+        cur.close()
+        conn.close()
+
+    coating = {"coating_id": coating_id, "made_by": made_by, "coat_weight_gsm": coat_weight_gsm, "porosity": porosity}
+    return templates.TemplateResponse("edit_coating.html", {"request": request, "coating": coating, "error": error, "success": success})
+
+
+@app.post("/coatings/{coating_id}/delete")
+def delete_coating(request: Request, coating_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+    if not request.session.get("is_admin"):
+        return HTMLResponse("Admins only.", status_code=403)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM tbl_coating WHERE coating_id = %s", (coating_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return HTMLResponse(f"Cannot delete: this coating still has linked cells referencing it. ({str(e)})", status_code=400)
+
+    cur.close()
+    conn.close()
+    return RedirectResponse(url="/inventory/coatings", status_code=303)
+
+@app.get("/slp/{slp_id}/edit", response_class=HTMLResponse)
+def edit_slp_form(request: Request, slp_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT slp_id, coating_id, project, date_made, made_by, electrolyte, formation_capacity "
+        "FROM tbl_slp WHERE slp_id = %s", (slp_id,)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        return HTMLResponse("SLP cell not found.", status_code=404)
+
+    columns = ["slp_id", "coating_id", "project", "date_made", "made_by", "electrolyte", "formation_capacity"]
+    slp = dict(zip(columns, row))
+    return templates.TemplateResponse("edit_slp.html", {"request": request, "slp": slp})
+
+
+@app.post("/slp/{slp_id}/edit", response_class=HTMLResponse)
+def submit_edit_slp(request: Request, slp_id: str, made_by: str = Form(...), electrolyte: str = Form(None), formation_capacity: str = Form(None)):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+
+    made_by = made_by.strip()
+    error = None
+    success = None
+
+    if not made_by:
+        error = "Made By is required."
+    else:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE tbl_slp SET made_by = %s, electrolyte = %s, formation_capacity = %s WHERE slp_id = %s",
+                (made_by, electrolyte if electrolyte else None, formation_capacity if formation_capacity else None, slp_id)
+            )
+            conn.commit()
+            success = "SLP cell updated."
+        except Exception as e:
+            conn.rollback()
+            error = str(e)
+        cur.close()
+        conn.close()
+
+    slp = {"slp_id": slp_id, "made_by": made_by, "electrolyte": electrolyte, "formation_capacity": formation_capacity}
+    return templates.TemplateResponse("edit_slp.html", {"request": request, "slp": slp, "error": error, "success": success})
+
+
+@app.post("/slp/{slp_id}/delete")
+def delete_slp(request: Request, slp_id: str):
+    redirect = require_login(request)
+    if redirect:
+        return redirect
+    if not request.session.get("is_admin"):
+        return HTMLResponse("Admins only.", status_code=403)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM tbl_slp WHERE slp_id = %s", (slp_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return HTMLResponse(f"Cannot delete: {str(e)}", status_code=400)
+
+    cur.close()
+    conn.close()
+    return RedirectResponse(url="/inventory/slp", status_code=303)
