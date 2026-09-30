@@ -46,19 +46,26 @@
         dimmed:   1    // off the highlighted path
     };
 
-    function findPathToRoot(targetId, edges) {
-        // Walk backwards through edges (child -> parent) until no parent found.
+    function findAncestors(targetId, edges) {
+        // Walk backwards (child -> parent) through EVERY parent, not just the first.
+        // An MLP has two parents (cathode and anode coating), so both branches
+        // back to their materials are included.
         // Excludes dashed project-reference edges — only follows real traceability links.
-        const path = [targetId];
-        let current = targetId;
-        let guard = 0;
-        while (guard++ < 20) {
-            const parentEdge = edges.find(e => e.to === current && !e.dashes);
-            if (!parentEdge) break;
-            path.unshift(parentEdge.from);
-            current = parentEdge.from;
+        const ancestors = new Set([targetId]);
+        const queue = [targetId];
+
+        while (queue.length) {
+            const current = queue.shift();
+            edges
+                .filter(edge => edge.to === current && !edge.dashes)
+                .forEach(edge => {
+                    if (!ancestors.has(edge.from)) {
+                        ancestors.add(edge.from);
+                        queue.push(edge.from);
+                    }
+                });
         }
-        return path;
+        return ancestors;
     }
 
     function findDescendants(startId, edges) {
@@ -208,13 +215,13 @@
                 // nodesDS.forEach(n => nodesDS.update({ id: n.id, borderWidth: 2 }));
                 nodesDS.forEach(node => setNodeStyle(node, true));
 
-                // Trace the manufacturing path back to its root material
+                // Trace every manufacturing branch back to its root material(s)
                 const allEdges = edgesDS.get();
-                const path = findPathToRoot(nodeId, allEdges);
+                const upstreamNodes = findAncestors(nodeId, allEdges);
 
-                // Include the upstream path and every downstream traceability node.
+                // Include the upstream branches and every downstream traceability node.
                 const downstreamNodes = findDescendants(nodeId, allEdges);
-                const selectedPath = new Set([...path, ...downstreamNodes]);
+                const selectedPath = new Set([...upstreamNodes, ...downstreamNodes]);
                 currentSelectedPath = selectedPath
                 
                 // Highlight all real edges within the selected traceability branch.
