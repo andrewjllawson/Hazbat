@@ -11,6 +11,7 @@ from fastapi import UploadFile, File
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.responses import RedirectResponse, Response
 import qrcode
+import jinja2
 import io
 import base64
 import os
@@ -22,6 +23,16 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET", "dev-secret-change-this-later"))
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+def dash(value):
+    """Template filter: {{ value | dash }} shows "—" for blank or missing values."""
+    if value is None or isinstance(value, jinja2.Undefined) or value == "":
+        return "—"
+    return value
+
+
+templates.env.filters["dash"] = dash
 def get_connection():
     database_url = os.getenv("DATABASE_URL")
     if database_url:
@@ -1359,12 +1370,20 @@ def make_qr_png(url: str) -> bytes:
     return buf.getvalue()
 
 
+def card_path(record_id: str, record_type: str) -> str:
+    """Page a QR code should open: the lineage & passport page for cells, the basic card otherwise."""
+    if record_type in CELL_TYPES:
+        return f"/card/{record_id}/lineage"
+    return f"/card/{record_id}"
+
+
 @app.get("/qr/{record_id}.png")
 def qr_code(record_id: str):
-    """QR code image for a record's card, used by the graph panel and for labels."""
-    if not detect_record_type(record_id):
+    """QR code image for a record, used by the graph panel, the cards and for labels."""
+    record_type = detect_record_type(record_id)
+    if not record_type:
         return Response(status_code=404)
-    return Response(content=make_qr_png(f"{BASE_URL}/card/{record_id}"), media_type="image/png")
+    return Response(content=make_qr_png(BASE_URL + card_path(record_id, record_type)), media_type="image/png")
 
 
 @app.get("/card/{record_id}", response_class=HTMLResponse)
@@ -1373,8 +1392,8 @@ def view_card(request: Request, record_id: str):
     if not record_type:
         return HTMLResponse("Unrecognised ID format.", status_code=404)
 
-    # QR code for THIS card's own URL
-    qr_base64 = base64.b64encode(make_qr_png(f"{BASE_URL}/card/{record_id}")).decode()
+    # QR code: cells open their lineage & passport page, other records this card
+    qr_base64 = base64.b64encode(make_qr_png(BASE_URL + card_path(record_id, record_type))).decode()
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1410,7 +1429,7 @@ def card_data(record_id: str):
             "cost_gbp": None,
             "qr_url": f"/qr/{record_id}.png",
             "card_url": f"/card/{record_id}",
-            "lineage_url": None,  # set when the lineage & passport page is added
+            "lineage_url": f"/card/{record_id}/lineage",
         }
     cur.close()
     conn.close()
@@ -1421,6 +1440,166 @@ def card_data(record_id: str):
     record = {k: (str(v) if v is not None else "N/A") for k, v in record.items()}
     return JSONResponse({"record_id": record_id, "record_type": record_type,
                          "record": record, "chain": chain, "panel": panel})
+
+
+# --- Lineage & passport page ------------------------------------------------
+# Sustainability numbers are not recorded yet, so they stay None (shown as "—")
+# until process-step data is added to the database.
+EMPTY_PROCESS_METRICS = {"kg_co2e": None, "energy_kwh": None, "cost_gbp": None, "data_quality": None}
+
+
+def to_jsonable(value):
+    """Make dates and Decimals from Postgres safe for JSON."""
+    if isinstance(value, dict):
+        return {k: to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_jsonable(v) for v in value]
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if value is not None and type(value).__name__ == "Decimal":
+        return float(value)
+    return value
+
+
+def electrode_role(material_id: str) -> str:
+    rid = (material_id or "").upper()
+    if rid.startswith("CAT"):
+        return "Cathode"
+    if rid.startswith("AN"):
+        return "Anode"
+    return "Electrode"
+
+
+def coating_with_material(cur, coating_id: str):
+    """One branch of the lineage: the coating and the material it was made from."""
+    cur.execute(
+        "SELECT material_id, project, coating_date, made_by, coat_weight_gsm, porosity, notes "
+        "FROM tbl_coating WHERE coating_id = %s", (coating_id,)
+    )
+    row = cur.fetchone()
+    keys = ["material_id", "project", "coating_date", "made_by", "coat_weight_gsm", "porosity", "notes"]
+    coating = {"id": coating_id, **(dict(zip(keys, row)) if row else {k: None for k in keys})}
+
+    material = None
+    if coating["material_id"]:
+        cur.execute(
+            "SELECT chemistry, supplier, date_received, quantity_kg, location, availability "
+            "FROM tbl_materials WHERE material_id = %s", (coating["material_id"],)
+        )
+        row = cur.fetchone()
+        keys = ["chemistry", "supplier", "date_received", "quantity_kg", "location", "availability"]
+        material = {"id": coating["material_id"], **(dict(zip(keys, row)) if row else {k: None for k in keys}),
+                    "embodied_kg_co2e": None, "recycled_content": None}
+
+    return {
+        "role": electrode_role(coating["material_id"] or coating_id),
+        "material": material,
+        "process": {"name": "Electrode manufacture", "steps": "Mix → Coat → Dry → Calender",
+                    "date": coating["coating_date"], "operator": coating["made_by"], "location": None,
+                    **EMPTY_PROCESS_METRICS},
+        "coating": coating,
+    }
+
+
+def build_lineage(cur, record_type: str, record_id: str):
+    """Everything the lineage & passport page shows for one cell (None if not found)."""
+    record, chain = fetch_card_record(cur, record_type, record_id)
+    if not record:
+        return None
+
+    if record_type == "mlp":
+        coating_ids = [record["Cathode Coating"], record["Anode Coating"]]
+    else:
+        coating_ids = [record["Coating ID"]]
+    branches = [coating_with_material(cur, cid) for cid in coating_ids]
+
+    cur.execute(
+        "SELECT filename, num_cycles, uploaded_at FROM tbl_cycling_data "
+        "WHERE record_id = %s ORDER BY uploaded_at DESC LIMIT 1", (record_id,)
+    )
+    row = cur.fetchone()
+    cycling = {"filename": row[0], "half_cycles": row[1], "uploaded_at": row[2]} if row else None
+
+    chemistry = " ‖ ".join((b["material"] or {}).get("chemistry") or "?" for b in branches)
+    suppliers = [(b["material"] or {}).get("supplier") for b in branches]
+    capacity = record.get("Cell Capacity") or record.get("Formation Capacity")
+
+    lineage = {
+        "record_id": record_id,
+        "record_type": record_type,
+        "chemistry": chemistry,
+        "record": record,
+        "chain": chain,
+        "branches": branches,
+        "assembly": {"name": "Cell assembly", "date": record.get("Date Made"), "operator": record.get("Made By"),
+                     "location": None, "inputs": {"electrolyte": record.get("Electrolyte")}, **EMPTY_PROCESS_METRICS},
+        "formation": {"name": "Formation", "formation_capacity": record.get("Formation Capacity"),
+                      **EMPTY_PROCESS_METRICS},
+        "usage": {"type": "Testing" if cycling else None, "cycling": cycling},
+        "end_of_life": {"route": None, "recycler": None, "second_life_eligible": None},
+        "totals": {"kg_co2e": None, "kg_co2e_per_kwh": None, "energy_kwh": None,
+                   "cost_gbp": None, "cost_per_kwh": None},
+        "qr_url": f"/qr/{record_id}.png",
+    }
+
+    # How much of the passport is filled in (a rough guide, not a compliance check)
+    checks = {
+        "Chemistry": "?" not in chemistry,
+        "Supplier": all(suppliers),
+        "Electrolyte": record.get("Electrolyte") is not None,
+        "Capacity": capacity is not None,
+        "Date made": record.get("Date Made") is not None,
+        "Project": record.get("Project") is not None,
+        "Cycling data": cycling is not None,
+        "Carbon footprint": False,
+        "Cost": False,
+        "Process energy": False,
+        "Recycled content": False,
+        "End-of-life route": False,
+    }
+    lineage["completeness"] = {
+        "filled": sum(checks.values()),
+        "total": len(checks),
+        "missing": [name for name, ok in checks.items() if not ok],
+    }
+    return lineage
+
+
+@app.get("/card/{record_id}/lineage", response_class=HTMLResponse)
+def lineage_page(request: Request, record_id: str):
+    record_type = detect_record_type(record_id)
+    if not record_type:
+        return HTMLResponse("Unrecognised ID format.", status_code=404)
+    if record_type not in CELL_TYPES:
+        return RedirectResponse(url=f"/card/{record_id}", status_code=303)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    lineage = build_lineage(cur, record_type, record_id)
+    cur.close()
+    conn.close()
+
+    if not lineage:
+        return HTMLResponse("Record not found.", status_code=404)
+    return templates.TemplateResponse("lineage.html", {"request": request, "l": lineage})
+
+
+@app.get("/api/lineage/{record_id}")
+def lineage_data(record_id: str):
+    """Lineage & passport data for one cell as JSON (also the "Export JSON" button)."""
+    record_type = detect_record_type(record_id)
+    if record_type not in CELL_TYPES:
+        return JSONResponse({"error": "Lineage is only available for cells (SLP, coin cell, MLP)"}, status_code=404)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    lineage = build_lineage(cur, record_type, record_id)
+    cur.close()
+    conn.close()
+
+    if not lineage:
+        return JSONResponse({"error": "Record not found"}, status_code=404)
+    return JSONResponse(to_jsonable(lineage))
 
 
 @app.get("/api/chart/gsm-by-coating")
