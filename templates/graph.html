@@ -7,16 +7,11 @@
 <div style="display: flex; gap: 16px; margin-top: 16px; align-items: flex-start;">
     <div id="network" style="flex: 1; min-width: 0; height: 700px; background: #0a0e1a; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);"></div>
 
-    <div id="nodeCard" style="display: none; width: 320px; flex-shrink: 0; position: sticky; top: 20px;" class="result">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <h3 id="nodeCardTitle" style="margin: 0;"></h3>
-            <span onclick="clearSelection()" style="cursor: pointer; color: #999; font-size: 20px; line-height: 1;">&times;</span>
-        </div>
-        <div id="nodeCardFields" style="margin-top: 12px;"></div>
-        <div id="nodeCardChain" style="margin-top: 16px;"></div>
-    </div>
+    <!-- Quick-view panel for cells: filled in by static/js/node_panel.js -->
+    <aside id="nodePanel" class="result node-panel" hidden aria-live="polite"></aside>
 </div>
 
+<script src="/static/js/node_panel.js"></script>
 <script>
     function shortLabel(id, group) {
         if (group === 'project') return id.replace('PROJECT-', '');
@@ -89,7 +84,7 @@
 
     function clearSelection() {
         currentSelectedPath = null;
-        document.getElementById('nodeCard').style.display = 'none';
+        document.dispatchEvent(new CustomEvent('hazbat:clear'));   // closes the side panel
         if (pulseInterval) clearInterval(pulseInterval);
         edgesDS.forEach(e => edgesDS.update({ id: e.id, color: { color: 'rgba(120,140,200,0.35)' }, width: 1.5 }));
         nodesDS.forEach(node => setNodeStyle(node, true));
@@ -200,7 +195,7 @@
             
             network.on('zoom', onZoom);
 
-            network.on("click", async function(params) {
+            network.on("click", function(params) {
                 if (pulseInterval) clearInterval(pulseInterval);
 
                 if (params.nodes.length === 0) {
@@ -247,19 +242,8 @@
                     }));
                 }, 450);
 
-                // Load and show the card
-                const res = await fetch(`/api/card/${nodeId}`);
-                if (!res.ok) return;
-                const cardData = await res.json();
-                document.getElementById('nodeCardTitle').textContent = cardData.record_id;
-                document.getElementById('nodeCardFields').innerHTML = Object.entries(cardData.record)
-                    .map(([k, v]) => `<div class="row"><span class="label">${k}</span><span class="value">${v}</span></div>`)
-                    .join('');
-                document.getElementById('nodeCardChain').innerHTML = cardData.chain.length
-                    ? `<div style="font-size:12px;font-weight:700;color:#1b3a6b;margin-bottom:6px;">TRACEABILITY CHAIN</div>` +
-                      cardData.chain.map(c => `<div style="font-size:13px;padding:3px 0;">${c}</div>`).join('')
-                    : '';
-                document.getElementById('nodeCard').style.display = 'block';
+                // Tell the side panel which node was picked (static/js/node_panel.js)
+                document.dispatchEvent(new CustomEvent('hazbat:select', { detail: { id: nodeId } }));
             });
         });
 </script>

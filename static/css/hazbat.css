@@ -1,0 +1,72 @@
+/* Shared Hazbat theme. Colours match base.html (nav/card gradient) and the
+   node colours used on the traceability graph, so cards and the graph look alike. */
+:root {
+    --hz-navy: #1b3a6b;
+    --hz-blue: #2e5fa3;
+    --hz-bg: #f4f6fb;
+    --hz-text: #1a1a2e;
+    --hz-muted: #6b6f7b;
+    --hz-line: #f0f2f7;
+    --hz-border: #dde2ee;
+
+    /* Metric colours: carbon, cost, energy / state of health */
+    --hz-carbon: #2e7d32;  --hz-carbon-bg: #e8f3ea;
+    --hz-cost: #8a5a00;    --hz-cost-bg: #fbf1dd;
+    --hz-energy: #2e5fa3;  --hz-energy-bg: #eaf0f8;
+
+    /* Graph node colours (same as groupColors in graph.html) */
+    --hz-material: #00e5ff;
+    --hz-coating: #7c4dff;
+    --hz-slp: #00ff9d;
+    --hz-coincell: #ff6ec7;
+    --hz-mlp: #ffb800;
+}
+
+/* --- Graph quick-view panel (static/js/node_panel.js) --- */
+.node-panel {
+    width: 320px; flex-shrink: 0; position: sticky; top: 20px;
+    margin-top: 0; display: flex; flex-direction: column; gap: 12px;
+}
+.node-panel[hidden] { display: none; }
+.node-panel-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.node-panel-head h3 {
+    margin: 0; font-size: 18px;
+    font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.node-panel-close {
+    width: 44px; height: 44px; margin: -10px -10px 0 0; padding: 0;
+    background: transparent; color: var(--hz-muted); font-size: 22px; line-height: 1;
+}
+.node-panel-close:hover { background: var(--hz-line); color: var(--hz-text); }
+.type-pill {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+    padding: 2px 8px; border-radius: 999px; background: var(--hz-line);
+    font-size: 12px; font-weight: 700; color: var(--hz-navy);
+}
+.type-pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+.metric-boxes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.metric-box { padding: 8px; border-radius: 8px; display: flex; flex-direction: column; gap: 2px; }
+.metric-box .metric-label { font-size: 11px; font-weight: 700; }
+.metric-box .metric-value { font-size: 14px; font-weight: 700; color: var(--hz-text); }
+.metric-box.carbon { background: var(--hz-carbon-bg); } .metric-box.carbon .metric-label { color: var(--hz-carbon); }
+.metric-box.cost   { background: var(--hz-cost-bg); }   .metric-box.cost .metric-label   { color: var(--hz-cost); }
+.metric-box.soh    { background: var(--hz-energy-bg); } .metric-box.soh .metric-label    { color: var(--hz-energy); }
+.panel-qr {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px; border-radius: 10px; background: #f7f7f7;
+}
+.panel-qr img { width: 120px; height: 120px; background: #fff; border-radius: 4px; }
+.panel-qr span { font-size: 12px; color: var(--hz-muted); }
+.panel-button {
+    display: flex; align-items: center; justify-content: center; min-height: 44px;
+    border-radius: 8px; background: var(--hz-blue); color: #fff;
+    font-size: 14px; font-weight: 600; text-decoration: none;
+}
+.panel-button:hover { background: var(--hz-navy); }
+.panel-links { display: flex; justify-content: space-between; font-size: 13px; }
+.panel-links a { color: var(--hz-blue); font-weight: 600; text-decoration: none; }
+.panel-chain { padding-top: 10px; border-top: 1px solid var(--hz-line); }
+.panel-chain .chain-title { font-size: 12px; font-weight: 700; color: var(--hz-navy); margin-bottom: 4px; }
+.panel-chain div { font-size: 13px; padding: 2px 0; }
+.node-panel .row { gap: 12px; }
+.node-panel .row .value { text-align: right; overflow-wrap: anywhere; }
