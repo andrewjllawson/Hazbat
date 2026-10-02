@@ -174,6 +174,24 @@
                         <div class="row"><span class="label">Avg. CE</span><span class="value" id="perfCe">—</span></div>
                     </div>
                 </div>
+                <div class="vc">
+                    <div class="vc-head">
+                        <span class="vc-title">Voltage vs areal capacity</span>
+                        <label>Cycles
+                            <select id="vcCycles">
+                                <option value="1,2">1 &amp; 2</option>
+                                <option value="1,last">First &amp; last</option>
+                                <option value="1,2,3,4,5">First 5</option>
+                                <option value="all">All (up to 20)</option>
+                            </select>
+                        </label>
+                        <label>Electrode area
+                            <input id="vcArea" type="number" min="0" step="0.001" placeholder="cm²" inputmode="decimal"> cm²
+                        </label>
+                    </div>
+                    <canvas id="voltageChart" height="230"></canvas>
+                    <div class="muted small" id="vcNote">Loading voltage curves…</div>
+                </div>
                 {% else %}
                 <p class="muted">No cycling data for this cell yet. <a href="/cycling/upload">Upload a BioLogic .mpr file</a> to see capacity, coulombic efficiency and state of health here.</p>
                 {% endif %}
@@ -295,6 +313,75 @@
             }
         })
         .catch(() => { document.getElementById('sohNote').textContent = 'cycling file could not be read'; });
+
+    // Voltage vs (areal) capacity, one colour per cycle: charge and discharge curves
+    (function () {
+        const recordId = {{ l.record_id | tojson }};
+        const COLOURS = ['#2e5fa3', '#e8730c', '#2e9e5b', '#8a5ad6', '#c62828', '#00838f', '#6d4c41', '#ad1457'];
+        const areaInput = document.getElementById('vcArea');
+        const cyclesSelect = document.getElementById('vcCycles');
+        const note = document.getElementById('vcNote');
+        const areaKey = 'hazbat-area-' + recordId;   // remember the area per cell in this browser
+        let chart = null, curves = null;
+
+        try { const saved = localStorage.getItem(areaKey); if (saved) areaInput.value = saved; } catch (e) {}
+
+        function draw() {
+            if (!curves || !window.Chart) return;
+            const area = parseFloat(areaInput.value);
+            const useArea = area > 0;
+            const datasets = [];
+            curves.cycles.forEach((c, i) => {
+                const colour = COLOURS[i % COLOURS.length];
+                ['charge', 'discharge'].forEach(part => {
+                    if (!c[part]) return;
+                    datasets.push({
+                        label: `Cycle ${c.cycle}`,
+                        legendKey: part === 'charge' || !c.charge,   // one legend entry per cycle
+                        data: c[part].capacity_mah.map((q, k) => ({ x: useArea ? q / area : q, y: c[part].voltage_v[k] })),
+                        borderColor: colour, backgroundColor: colour, borderWidth: 1.8,
+                        showLine: true, pointRadius: 0, tension: 0
+                    });
+                });
+            });
+            if (chart) chart.destroy();
+            chart = new Chart(document.getElementById('voltageChart'), {
+                type: 'scatter',
+                data: { datasets },
+                options: {
+                    animation: false,
+                    plugins: { legend: { labels: { filter: (item, data) => data.datasets[item.datasetIndex].legendKey } } },
+                    scales: {
+                        x: { title: { display: true, text: useArea ? 'Areal capacity / mAh cm⁻²' : 'Capacity / mAh' } },
+                        y: { title: { display: true, text: 'Voltage / V' } }
+                    }
+                }
+            });
+            note.textContent = `${curves.cycles.length} of ${curves.n_cycles} cycles shown.` +
+                (useArea ? '' : ' Enter the electrode area to plot areal capacity (mAh/cm²).');
+        }
+
+        async function load() {
+            note.textContent = 'Loading voltage curves…';
+            try {
+                const res = await fetch(`/api/cycling/${encodeURIComponent(recordId)}/curves?cycles=${encodeURIComponent(cyclesSelect.value)}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not load voltage curves');
+                curves = data;
+                if (!curves.cycles.length) { note.textContent = 'No complete charge/discharge cycles found in the file.'; return; }
+                draw();
+            } catch (err) {
+                note.textContent = err.message;
+            }
+        }
+
+        areaInput.addEventListener('input', () => {
+            try { localStorage.setItem(areaKey, areaInput.value); } catch (e) {}
+            draw();
+        });
+        cyclesSelect.addEventListener('change', load);
+        load();
+    })();
 </script>
 {% endif %}
 {% endblock %}
