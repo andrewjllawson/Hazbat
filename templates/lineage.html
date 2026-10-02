@@ -28,6 +28,11 @@
 {% endmacro %}
 
 <div class="lin-page">
+    <!-- Only shown on the printed / PDF copy -->
+    <div class="print-only print-head">
+        <span><b>BMAC · Hazbat</b> — Cell lineage &amp; passport card</span>
+        <span>{{ l.record_id }} · printed <span id="printDate"></span></span>
+    </div>
     <div class="lin-crumbs">
         <a href="/graph">← Back to graph</a> · <a href="/card/{{ l.record_id }}">Basic card</a>
     </div>
@@ -49,6 +54,7 @@
             <span class="usage-value">{{ l.usage.type | dash }}</span>
             <span style="margin-left: auto;"></span>
             <a class="btn-outline" href="{{ l.qr_url }}" download="{{ l.record_id }}-qr.png">Print label</a>
+            <button type="button" class="btn-outline" id="savePdfBtn" title="Opens the print dialog: choose “Save as PDF”">Save as PDF</button>
             <a class="btn-outline" href="/api/lineage/{{ l.record_id }}" download="{{ l.record_id }}-passport.json">Export JSON</a>
             {% if l.record_type == "slp" %}<a class="btn-solid" href="/slp/{{ l.record_id }}/edit">Edit</a>{% endif %}
         </div>
@@ -189,6 +195,7 @@
                             <input id="vcArea" type="number" min="0" step="0.001" placeholder="cm²" inputmode="decimal"> cm²
                         </label>
                     </div>
+                    <div class="print-only muted small" id="vcPrintInfo"></div>
                     <canvas id="voltageChart" height="230"></canvas>
                     <div class="muted small" id="vcNote">Loading voltage curves…</div>
                 </div>
@@ -283,7 +290,33 @@
             </section>
         </div>
     </div>
+
+    <div class="print-only print-foot">
+        Source: {{ request.url }} · Values shown as “—” have not been recorded yet. Sample benchmarks: WEF (2019), EU Regulation 2023/1542.
+    </div>
 </div>
+
+<script>
+    // "Save as PDF": the browser's print dialog, laid out by the @media print rules in hazbat.css.
+    // The page title becomes the suggested PDF file name.
+    (function () {
+        const recordId = {{ l.record_id | tojson }};
+        const resizeCharts = () => {
+            if (window.Chart && Chart.instances) Object.values(Chart.instances).forEach(c => c.resize());
+        };
+        window.addEventListener('beforeprint', () => {
+            document.getElementById('printDate').textContent = new Date().toLocaleString('en-GB');
+            resizeCharts();
+        });
+        window.addEventListener('afterprint', resizeCharts);
+        document.getElementById('savePdfBtn').addEventListener('click', () => {
+            const oldTitle = document.title;
+            document.title = `${recordId}-lineage-passport`;
+            window.addEventListener('afterprint', () => { document.title = oldTitle; }, { once: true });
+            window.print();
+        });
+    })();
+</script>
 
 {% if l.usage.cycling %}
 <script>
@@ -357,6 +390,9 @@
                     }
                 }
             });
+            document.getElementById('vcPrintInfo').textContent =
+                `Cycles shown: ${curves.cycles.map(c => c.cycle).join(', ')} of ${curves.n_cycles}` +
+                (useArea ? ` · electrode area ${area} cm²` : ' · capacity in mAh (no electrode area entered)');
             note.textContent = `${curves.cycles.length} of ${curves.n_cycles} cycles shown.` +
                 (useArea ? '' : ' Enter the electrode area to plot areal capacity (mAh/cm²).');
         }

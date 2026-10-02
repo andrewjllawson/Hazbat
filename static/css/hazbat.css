@@ -208,3 +208,29 @@
 .vc-head label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; font-weight: 600; color: #4a4f5c; }
 .vc-head select, .vc-head input { width: auto; margin: 0; padding: 6px 8px; font-size: 13px; }
 .vc-head input { width: 90px; }
+
+/* --- "Save as PDF" of the lineage page: print layout (A4 portrait) --- */
+.print-only { display: none; }
+button.btn-outline { margin: 0; font-family: inherit; cursor: pointer; }
+.btn-outline:hover { background: var(--hz-line); }
+
+@media print {
+    @page { size: A4 portrait; margin: 10mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    html, body { background: #fff !important; }
+    nav, .lin-crumbs, .lin-actions a, .lin-actions button, .vc-head label, .link-strong, #vcNote { display: none !important; }
+    main { max-width: none !important; margin: 0 !important; padding: 0 !important; }
+
+    /* Scale the 960px screen layout to the A4 width (≈718px inside the margins) */
+    .lin-page { zoom: 0.74; gap: 12px; }
+    .print-only { display: block; }
+    .print-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--hz-navy);
+                  padding-bottom: 6px; border-bottom: 2px solid var(--hz-navy); }
+    .print-foot { font-size: 11px; color: var(--hz-muted); padding-top: 8px; border-top: 1px solid var(--hz-border); }
+
+    .result, .kpi, .lin-header { box-shadow: none !important; border: 1px solid var(--hz-border); }
+    .lin-header, .kpi, .lin-box, .lin-node, .lin-proc, .perf, .vc, .row, .mat-table > div { break-inside: avoid; }
+    .lin-col { gap: 12px; }
+    a { color: inherit !important; text-decoration: none !important; }
+    canvas { max-width: 100% !important; }
+}
