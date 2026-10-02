@@ -200,3 +200,11 @@
 .mat-table > div { display: grid; grid-template-columns: 1.3fr 1fr 1fr 32px; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--hz-line); overflow-wrap: anywhere; }
 .mat-table > div > span:last-child { text-align: right; }
 .mat-head { font-size: 11.5px; font-weight: 700; color: var(--hz-muted); border-bottom: 1px solid var(--hz-border) !important; }
+
+/* Voltage vs areal capacity chart on the lineage page */
+.vc { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--hz-line); }
+.vc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.vc-title { font-size: 13px; font-weight: 700; color: var(--hz-navy); margin-right: auto; }
+.vc-head label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; font-weight: 600; color: #4a4f5c; }
+.vc-head select, .vc-head input { width: auto; margin: 0; padding: 6px 8px; font-size: 13px; }
+.vc-head input { width: 90px; }
